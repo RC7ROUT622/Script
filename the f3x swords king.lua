@@ -1,4 +1,4 @@
--- F3X Colored Swords (short). LocalScript in StarterGui. Keep F3X in your backpack.
+-- F3X Swords, Script 1 of 2. LocalScript in StarterGui. Keep F3X in your backpack.
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local player = Players.LocalPlayer
@@ -28,7 +28,8 @@ local ORBIT_RADIUS, ORBIT_SPEED, SELF_SPIN = 5, 2, 4
 local HEIGHT, LOADED_RADIUS, RISE_TIME = 9, 6, 0.5
 local SWORD_SCALE, HUGE_SCALE, HUGE_HEIGHT = 0.8, 3, 26
 local SHOOT_SPEED, MAX_RANGE = 120, 400
-local PIN_DIST, UNPIN_DIST = 22, 32   -- other players closer than this: parts get anchored so they can't fall
+local PIN_DIST, UNPIN_DIST = 16, 24
+local SYNC_EVERY, MAX_INFLIGHT = 0.05, 3
 local WHITE = Color3.fromRGB(255, 255, 255)
 local BALL = Vector3.new(1.6, 1.6, 1.6)
 local V, CF = Vector3.new, CFrame.new
@@ -118,30 +119,28 @@ end
 
 local slots = {}
 local active, building, combining = false, false, false
-local free, syncing, syncT = false, false, 0
+local free, syncT, inflight = false, 0, 0
 local angle, loadCounter = 0, 0
 local conn = nil
 local stuck = {}
 
 local function allParts()
-	local t, m = {}, {}
+	local t = {}
 	for _, s in ipairs(slots) do
-		if s.block and s.block.Parent then
-			table.insert(t, s.block)
-			table.insert(m, s.block)
-		end
-		if s.sword and s.sword.main.Parent then
-			for _, p in ipairs(s.sword.parts) do table.insert(t, p) end
-			table.insert(m, s.sword.main)
+		if s.block and s.block.Parent then table.insert(t, s.block) end
+		if s.sword then
+			for _, p in ipairs(s.sword.parts) do
+				if p.Parent then table.insert(t, p) end
+			end
 		end
 	end
-	return t, m
+	return t
 end
 
 local function setFree(f)
 	free = f
 	local list = {}
-	for _, p in ipairs((allParts())) do table.insert(list, { Part = p, Anchored = not f }) end
+	for _, p in ipairs(allParts()) do table.insert(list, { Part = p, Anchored = not f }) end
 	if #list > 0 then task.spawn(call, "SyncAnchor", list) end
 end
 
@@ -162,7 +161,7 @@ local function build(defs, fixed, weld)
 			table.insert(list, p)
 			table.insert(rs, { Part = p, Size = d.size, CFrame = d.cf })
 			table.insert(co, { Part = p, Color = d.color, UnionColoring = false })
-			table.insert(ma, { Part = p, Material = d.mat or Enum.Material.Neon })
+			table.insert(ma, { Part = p, Material = d.mat or Enum.Material.Neon, Transparency = d.trans })
 			table.insert(cl, { Part = p, CanCollide = false })
 			table.insert(un, { Part = p, Anchored = false })
 		end
@@ -201,16 +200,29 @@ local function swordDefs(color, scale, center)
 	return defs
 end
 
-local function toSword(made, n)
-	local list = {}
-	for i = 1, n do
-		if made[i] then table.insert(list, made[i]) end
+local function toSword(made, defs)
+	local parts, rel, inv = {}, {}, defs[1].cf:Inverse()
+	for i, d in ipairs(defs) do
+		if made[i] then
+			table.insert(parts, made[i])
+			table.insert(rel, inv * d.cf)
+		end
 	end
 	if not made[1] then
-		if #list > 0 then task.spawn(call, "Remove", list) end
+		if #parts > 0 then task.spawn(call, "Remove", parts) end
 		return nil
 	end
-	return { main = made[1], parts = list }
+	return { main = made[1], parts = parts, rel = rel }
+end
+
+local function place(part, cf)
+	part.CFrame = cf
+	part.AssemblyLinearVelocity = Vector3.zero
+	part.AssemblyAngularVelocity = Vector3.zero
+end
+
+local function placeSword(sw, cf)
+	for i, p in ipairs(sw.parts) do place(p, cf * sw.rel[i]) end
 end
 
 local function loadedCount()
@@ -224,8 +236,8 @@ end
 local function convert(slot)
 	local block, r = slot.block, getRoot()
 	slot.busy = true
-	local center = CF((r and r.Position or V(0, 50, 0)) + V(0, HEIGHT, 0))
-	local sw = toSword(build(swordDefs(slot.color, SWORD_SCALE, center), false, true), 5)
+	local defs = swordDefs(slot.color, SWORD_SCALE, CF((r and r.Position or V(0, 50, 0)) + V(0, HEIGHT, 0)))
+	local sw = toSword(build(defs, false, true), defs)
 	slot.busy = false
 	if slot.state ~= "converting" then
 		if sw then call("Remove", sw.parts) end
@@ -248,7 +260,7 @@ local function convert(slot)
 end
 
 local function endSet()
-	active, free, syncing = false, false, false
+	active, free, inflight = false, false, 0
 	if conn then
 		conn:Disconnect()
 		conn = nil
@@ -275,18 +287,12 @@ local function stopSet()
 	endSet()
 end
 
-local function place(part, cf)
-	part.CFrame = cf
-	part.AssemblyLinearVelocity = Vector3.zero
-	part.AssemblyAngularVelocity = Vector3.zero
-end
-
 local function frameUpdate(dt)
 	local r = getRoot()
 	if not r then return end
 	angle = angle + dt * ORBIT_SPEED
 	local head = r.Position + V(0, HEIGHT, 0)
-	local mine, roots = allParts()
+	local mine = allParts()
 
 	local near, lim = false, free and PIN_DIST or UNPIN_DIST
 	for _, pl in ipairs(Players:GetPlayers()) do
@@ -343,44 +349,23 @@ local function frameUpdate(dt)
 			local a = angle * 1.2 + (k / #loaded) * math.pi * 2
 			pos = head + V(math.cos(a) * LOADED_RADIUS, 0, math.sin(a) * LOADED_RADIUS)
 		end
-		place(slot.sword.main, CF(pos) * CFrame.Angles(0, angle * SELF_SPIN, 0))
+		placeSword(slot.sword, CF(pos) * CFrame.Angles(0, angle * SELF_SPIN, 0))
 	end
 	if huge then
-		place(huge.sword.main, CF(r.Position + V(0, HUGE_HEIGHT, 0)) * CFrame.Angles(0, angle * 1.5, 0))
+		placeSword(huge.sword, CF(r.Position + V(0, HUGE_HEIGHT, 0)) * CFrame.Angles(0, angle * 1.5, 0))
 	end
 
 	syncT = syncT + dt
-	if not free and syncT > 0.12 and not syncing and #roots > 0 then
-		syncT, syncing = 0, true
+	if not free and syncT > SYNC_EVERY and inflight < MAX_INFLIGHT and #mine > 0 then
+		syncT = 0
+		inflight = inflight + 1
 		local list = {}
-		for _, p in ipairs(roots) do table.insert(list, { Part = p, CFrame = p.CFrame }) end
+		for _, p in ipairs(mine) do table.insert(list, { Part = p, CFrame = p.CFrame }) end
 		task.spawn(function()
 			call("SyncMove", list)
-			syncing = false
+			inflight = math.max(inflight - 1, 0)
 		end)
 	end
-end
-
-local function lightning(center)
-	local top = center + V(0, 80, 0)
-	local pts = { top }
-	for i = 1, 7 do
-		table.insert(pts, top:Lerp(center, i / 8) + V(math.random(-6, 6), 0, math.random(-6, 6)))
-	end
-	table.insert(pts, center)
-	local defs = {}
-	for i = 1, #pts - 1 do
-		local a, b = pts[i], pts[i + 1]
-		defs[i] = {
-			shape = "Normal", size = V(0.8, (b - a).Magnitude, 0.8), color = Color3.fromRGB(190, 225, 255),
-			cf = CFrame.lookAt((a + b) / 2, b) * CFrame.Angles(-math.pi / 2, 0, 0),
-		}
-	end
-	local made = build(defs, true)
-	task.wait(0.6)
-	local rm = {}
-	for _, p in pairs(made) do table.insert(rm, p) end
-	call("Remove", rm)
 end
 
 local function combine()
@@ -412,16 +397,14 @@ local function combine()
 		for _, it in ipairs(items) do
 			local th = it.a0 + 8 * (u + 3 * u * u)
 			local rad = it.r0 + (1 - it.r0) * u * u
-			local sw = it.s.sword
-			if sw then
-				place(sw.main, CF(c + V(math.cos(th) * rad, it.y0 * (1 - u), math.sin(th) * rad))
+			if it.s.sword then
+				placeSword(it.s.sword, CF(c + V(math.cos(th) * rad, it.y0 * (1 - u), math.sin(th) * rad))
 					* CFrame.Angles(0, th * 2, 0))
 			end
 		end
 		if u >= 1 then break end
 		RunService.RenderStepped:Wait()
 	end
-	if active then lightning(c) end
 	if not active then
 		combining = false
 		return
@@ -432,11 +415,22 @@ local function combine()
 		if it.s.sword then
 			for _, p in ipairs(it.s.sword.parts) do table.insert(rm, p) end
 		end
-		it.s.sword, it.s.state = nil, "done"
 	end
-	call("Remove", rm)
+	local FX = shared.F3XFX
+	if FX then
+		FX.lightning(c, rm)
+	else
+		call("Remove", rm)
+		report("Script 2 (effects) is missing, so no lightning")
+	end
+	for _, it in ipairs(items) do it.s.sword, it.s.state = nil, "done" end
+	if not active then
+		combining = false
+		return
+	end
 
-	local sw = toSword(build(swordDefs(WHITE, HUGE_SCALE, CF(c)), false, true), 5)
+	local defs = swordDefs(WHITE, HUGE_SCALE, CF(c))
+	local sw = toSword(build(defs, false, true), defs)
 	if sw then
 		table.insert(slots, { index = COUNT + 1, color = WHITE, state = "loaded", huge = true, loadedAt = -1, sword = sw })
 		report("Huge white sword ready. Press Fire!")
@@ -508,7 +502,7 @@ local function shoot(slot)
 	local main = sw.main
 
 	local ignore = { player.Character }
-	for _, p in ipairs((allParts())) do table.insert(ignore, p) end
+	for _, p in ipairs(allParts()) do table.insert(ignore, p) end
 	for _, s in ipairs(stuck) do
 		for _, p in ipairs(s.parts) do table.insert(ignore, p) end
 	end
@@ -522,26 +516,36 @@ local function shoot(slot)
 
 	local pos = main.Position
 	local dir = (target - pos).Unit
-	local total = (target - pos).Magnitude
+	local total = math.max((target - pos).Magnitude - 5.3 * (slot.huge and HUGE_SCALE or SWORD_SCALE), 0)
 	local travelled = 0
 	local tilt = CFrame.Angles(-math.pi / 2, 0, 0)
+
+	if slot.huge and shared.F3XFX then
+		task.spawn(shared.F3XFX.trail, pos, pos + dir * total, total / SHOOT_SPEED)
+	end
 
 	while travelled < total and main.Parent do
 		local dt = RunService.RenderStepped:Wait()
 		local step = math.min(SHOOT_SPEED * dt, total - travelled)
 		travelled = travelled + step
 		pos = pos + dir * step
-		place(main, CFrame.lookAt(pos, pos + dir) * tilt)
+		placeSword(sw, CFrame.lookAt(pos, pos + dir) * tilt)
 	end
 
 	slot.sword = nil
 	slot.state = "done"
 	if main.Parent then
-		call("SyncMove", { { Part = main, CFrame = main.CFrame } })
-		local an = {}
-		for _, p in ipairs(sw.parts) do table.insert(an, { Part = p, Anchored = true }) end
+		local mv, an = {}, {}
+		for _, p in ipairs(sw.parts) do
+			table.insert(mv, { Part = p, CFrame = p.CFrame })
+			table.insert(an, { Part = p, Anchored = true })
+		end
+		call("SyncMove", mv)
 		call("SyncAnchor", an)
 		table.insert(stuck, sw)
+		if slot.huge and hit and shared.F3XFX then
+			task.spawn(shared.F3XFX.impact, hit.Position, hit.Normal)
+		end
 	end
 end
 
@@ -562,6 +566,7 @@ end))
 
 combineBtn.MouseButton1Click:Connect(safe("Combine", combine))
 
+shared.F3X = { build = build, call = call }
 report("Ready")
 end
 
