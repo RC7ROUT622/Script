@@ -23,58 +23,72 @@ local SHOOT_SPEED, MAX_RANGE = 120, 400
 local PIN_DIST, UNPIN_DIST = 16, 24
 local SYNC_EVERY, MAX_INFLIGHT = 0.05, 3
 local PLATFORM_SIZE = 150
+local HUGE_RADIUS, SMALL_RADIUS = 16, 6
 local COUNT = 7
 local WHITE = C(255, 255, 255)
 local BALL = Vector3.new(1.6, 1.6, 1.6)
 local V, CF = Vector3.new, CFrame.new
-local function hue(i) return Color3.fromHSV((i - 1) / 7 * 0.8, 0.85, 1) end
-local del = { parts = true, players = false, platform = false }
+local COLORS = { C(255, 40, 40), C(255, 140, 20), C(255, 235, 40), C(50, 255, 80), C(40, 140, 255), C(90, 40, 220), C(190, 60, 255) }
+local del = { parts = true, players = false, platform = false, boom = true, crack = true, small = false }
 local gui = new("ScreenGui", { Name = "F3XSwordsGui", ResetOnSpawn = false, DisplayOrder = 50 }, playerGui)
-local column = new("Frame", {
+local col1 = new("Frame", {
 BackgroundTransparency = 1, AutomaticSize = Enum.AutomaticSize.Y, Size = U(0, 150, 0, 0),
 AnchorPoint = Vector2.new(0, 0.5), Position = U(0, 8, 0.5, 0),
 }, gui)
-new("UIListLayout", { Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder }, column)
-local function makeButton(text, order, color, h)
+new("UIListLayout", { Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder }, col1)
+local function makeButton(text, order, color, h, parent)
 local b = new("TextButton", {
 Size = U(1, 0, 0, h or 38), LayoutOrder = order, BackgroundColor3 = color,
 TextColor3 = Color3.new(1, 1, 1), Font = Enum.Font.GothamBold, TextSize = 15, Text = text,
-}, column)
+}, parent or col1)
 new("UICorner", {}, b)
 return b
 end
-local buildBtn = makeButton("Build Rainbow", 1, C(60, 120, 255))
-local loadBtn = makeButton("Load Sword", 2, C(255, 140, 20))
-local fireBtn = makeButton("Fire", 3, C(200, 60, 60))
-local combineBtn = makeButton("Combine", 4, C(150, 150, 160))
-loadBtn.Visible, fireBtn.Visible, combineBtn.Visible = false, false, false
-local delBtns = {}
-for i, k in ipairs({ "parts", "players", "platform" }) do
-local label = "Delete " .. k:sub(1, 1):upper() .. k:sub(2)
-local b = makeButton("", 4 + i, C(90, 90, 100), 30)
+local bBtn = makeButton("Build Rainbow", 1, C(60, 120, 255))
+local lBtn = makeButton("Load Sword", 2, C(255, 140, 20))
+local fBtn = makeButton("Fire", 3, C(200, 60, 60))
+local cBtn = makeButton("Combine", 4, C(150, 150, 160))
+lBtn.Visible, fBtn.Visible, cBtn.Visible = false, false, false
+local fpB = makeButton("First Person: OFF", 5, C(70, 70, 100))
+local cross = new("ScreenGui", { Name = "F3XCross", ResetOnSpawn = false, IgnoreGuiInset = true, Enabled = false }, playerGui)
+new("TextLabel", {
+Size = U(0, 40, 0, 40), Position = U(0.5, 0, 0.5, 0), AnchorPoint = Vector2.new(0.5, 0.5),
+BackgroundTransparency = 1, TextColor3 = C(255, 60, 60), TextSize = 40, Font = Enum.Font.GothamBold, Text = "+",
+}, cross)
+local fp = false
+fpB.MouseButton1Click:Connect(function()
+fp = not fp
+player.CameraMode = fp and Enum.CameraMode.LockFirstPerson or Enum.CameraMode.Classic
+cross.Enabled = fp
+fpB.Text = "First Person: " .. (fp and "ON" or "OFF")
+end)
+local col2 = new("Frame", {
+BackgroundTransparency = 1, AutomaticSize = Enum.AutomaticSize.Y, Size = U(0, 150, 0, 0),
+AnchorPoint = Vector2.new(0, 0.5), Position = U(0, 164, 0.5, 0), Visible = false,
+}, gui)
+new("UIListLayout", { Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder }, col2)
+for i, t in ipairs({ { "parts", "Huge Parts" }, { "players", "Huge Players" }, { "platform", "Huge Platform" },
+{ "boom", "Explosion" }, { "crack", "Crack" }, { "small", "Small Players" } }) do
+local k, label = t[1], t[2]
+local b = makeButton("", i, C(90, 90, 100), 32, col2)
+b.TextSize = 13
 local function upd()
 b.Text = label .. ": " .. (del[k] and "ON" or "OFF")
 b.BackgroundColor3 = del[k] and C(50, 160, 80) or C(90, 90, 100)
 end
 upd()
-b.Visible = false
 b.MouseButton1Click:Connect(function()
 del[k] = not del[k]
 upd()
 end)
-ins(delBtns, b)
 end
-local function showDel(v)
-for _, b in ipairs(delBtns) do b.Visible = v end
-end
-local statusLabel = new("TextLabel", {
+local stL = new("TextLabel", {
 Size = U(1, 0, 0, 50), LayoutOrder = 10, BackgroundColor3 = C(20, 20, 28),
 BackgroundTransparency = 0.3, TextColor3 = C(230, 230, 240), TextSize = 12,
 TextWrapped = true, Text = "Ready",
-}, column)
+}, col1)
 local function report(msg)
-warn("[F3X] " .. tostring(msg))
-statusLabel.Text = tostring(msg)
+stL.Text = tostring(msg)
 end
 local function safe(name, fn)
 return function(...)
@@ -83,7 +97,7 @@ if not ok then report(name .. " error: " .. tostring(err)) end
 end
 end
 local endpoint
-local function refreshEndpoint()
+local function rE()
 if endpoint and endpoint.Parent then return true end
 for _, c in ipairs({ player.Character, player.Backpack }) do
 if c then
@@ -99,42 +113,39 @@ end
 return false
 end
 local function call(...)
-if not refreshEndpoint() then return nil end
+if not rE() then return nil end
 local args = { ... }
 local ok, res = pcall(function()
 return endpoint:InvokeServer(table.unpack(args))
 end)
-if not ok then
-warn("[F3X] call failed: " .. tostring(res))
-return nil
-end
+if not ok then return nil end
 return res
 end
 local function getRoot()
 return player.Character and player.Character:FindFirstChild("HumanoidRootPart")
 end
-local slots = {}
-local active, building, combining = false, false, false
-local free, syncT, inflight = false, 0, 0
-local angle, loadCounter = 0, 0
+local SL = {}
+local active, bld, cmb = false, false, false
+local free, sT, inf = false, 0, 0
+local angle, lc = 0, 0
 local conn = nil
 local stuck = {}
-local function allParts()
+local function aP()
 local t = {}
-for _, s in ipairs(slots) do
+for _, s in ipairs(SL) do
 if s.block and s.block.Parent then ins(t, s.block) end
-if s.sword then
-for _, p in ipairs(s.sword.parts) do
+if s.sw then
+for _, p in ipairs(s.sw.parts) do
 if p.Parent then ins(t, p) end
 end
 end
 end
 return t
 end
-local function setFree(f)
+local function sFr(f)
 free = f
 local list = {}
-for _, p in ipairs(allParts()) do ins(list, { Part = p, Anchored = not f }) end
+for _, p in ipairs(aP()) do ins(list, { Part = p, Anchored = not f }) end
 if #list > 0 then task.spawn(call, "SyncAnchor", list) end
 end
 local function build(defs, fixed, weld)
@@ -171,7 +182,7 @@ if free then call("SyncAnchor", un) end
 end
 return made
 end
-local function swordDefs(color, scale, center)
+local function sDf(color, scale, center)
 local bp = {
 { "Normal", CF(0, 2.5, 0), V(1.2, 9, 0.35), NEON },
 { "Normal", CF(0, 7.2, 0) * CFrame.Angles(0, 0, math.rad(45)), V(0.85, 0.85, 0.35), NEON },
@@ -189,7 +200,7 @@ cf = center * (CF(o.Position * scale) * (CF(o.Position):Inverse() * o)),
 end
 return defs
 end
-local function toSword(made, defs)
+local function tSw(made, defs)
 local parts, rel, inv = {}, {}, defs[1].cf:Inverse()
 for i, d in ipairs(defs) do
 if made[i] then
@@ -208,17 +219,17 @@ part.CFrame = cf
 part.AssemblyLinearVelocity = Vector3.zero
 part.AssemblyAngularVelocity = Vector3.zero
 end
-local function placeSword(sw, cf)
+local function pSw(sw, cf)
 for i, p in ipairs(sw.parts) do place(p, cf * sw.rel[i]) end
 end
-local function loadedCount()
+local function lCt()
 local n = 0
-for _, s in ipairs(slots) do
+for _, s in ipairs(SL) do
 if s.state == "loaded" and not s.huge then n = n + 1 end
 end
 return n
 end
-local function lightning(center, removeNow)
+local function lit(center, removeNow)
 local top = center + V(0, 80, 0)
 local pts = { top }
 for i = 1, 7 do
@@ -258,45 +269,54 @@ local rm = {}
 for _, p in pairs(made) do ins(rm, p) end
 call("Remove", rm)
 end
-local function impact(hit)
-local pos, normal, part = hit.Position, hit.Normal.Unit, hit.Instance
-local deleted = false
-if part and not part:IsA("Terrain") then
-local model = part:FindFirstAncestorOfClass("Model")
-local isPlayer = model and model:FindFirstChildOfClass("Humanoid")
-local s = part.Size
-local kind = isPlayer and "players" or (math.max(s.X, s.Y, s.Z) > PLATFORM_SIZE and "platform" or "parts")
-if del[kind] then
-local rm = { part }
-if isPlayer then
-rm = {}
+local function strike(pos, radius, allow)
+local op = OverlapParams.new()
+op.FilterType = Enum.RaycastFilterType.Exclude
+op.FilterDescendantsInstances = { player.Character }
+op.RespectCanCollide = true
+local rm, seen = {}, {}
+for _, p in ipairs(workspace:GetPartBoundsInRadius(pos, radius, op)) do
+if not p:IsA("Terrain") then
+local model = p:FindFirstAncestorOfClass("Model")
+if model and model:FindFirstChildOfClass("Humanoid") then
+if allow.players and not seen[model] then
+seen[model] = true
 for _, d in ipairs(model:GetDescendants()) do
 if d:IsA("BasePart") then ins(rm, d) end
 end
 end
+else
+local s = p.Size
+local big = math.max(s.X, s.Y, s.Z) > PLATFORM_SIZE
+if (big and allow.platform) or (not big and allow.parts) then ins(rm, p) end
+end
+end
+end
+if #rm == 0 then return false end
 call("Remove", rm)
-deleted = not part.Parent
+return not rm[1].Parent
 end
+local function sH(hit)
+if del.small then strike(hit.Position, SMALL_RADIUS, { players = true }) end
 end
+local function impact(hit)
+local pos, normal = hit.Position, hit.Normal.Unit
+local deleted = strike(pos, HUGE_RADIUS, del)
 local ref = math.abs(normal.Y) > 0.9 and V(1, 0, 0) or V(0, 1, 0)
 local t1 = normal:Cross(ref).Unit
 local t2 = normal:Cross(t1).Unit
 local defs = {}
-for i = 1, deleted and 0 or 9 do
-local ang = (i / 9) * math.pi * 2 + math.random() * 0.4
-local p0 = pos
-for s = 1, 3 do
-local len = math.random(5, 9)
-ang = ang + (math.random() - 0.5) * 0.8
-local p1 = p0 + (t1 * math.cos(ang) + t2 * math.sin(ang)) * len
+for i = 1, (deleted or not del.crack) and 0 or 10 do
+local ang = (i / 10) * math.pi * 2 + math.random() * 0.4
+local len = math.random(9, 17)
+local p1 = pos + (t1 * math.cos(ang) + t2 * math.sin(ang)) * len
 ins(defs, {
-shape = "Normal", size = V(0.9 - s * 0.2, 0.15, len + 0.3), color = C(255, 110, 20),
-cf = CFrame.lookAt((p0 + p1) / 2 + normal * 0.1, p1 + normal * 0.1, normal),
+shape = "Normal", size = V(0.6, 0.15, len), color = C(255, 110, 20),
+cf = CFrame.lookAt((pos + p1) / 2 + normal * 0.1, p1 + normal * 0.1, normal),
 })
-p0 = p1
-end
 end
 if #defs > 0 then build(defs, true) end
+if not del.boom then return end
 local c = pos + normal * 2
 local balls = build({
 { shape = "Ball", cf = CF(c), size = V(2, 2, 2), color = C(255, 220, 120), trans = 0.2 },
@@ -314,148 +334,146 @@ end
 task.wait(5)
 local rm = {}
 for _, p in pairs(balls) do ins(rm, p) end
-lightning(c, rm)
+lit(c, rm)
 end
-local function convert(slot)
-local block, r = slot.block, getRoot()
-slot.busy = true
-local defs = swordDefs(slot.color, SWORD_SCALE, CF((r and r.Position or V(0, 50, 0)) + V(0, HEIGHT, 0)))
-local sw = toSword(build(defs, false, true), defs)
-slot.busy = false
-if slot.state ~= "converting" then
+local function convert(sl)
+local block, r = sl.block, getRoot()
+sl.busy = true
+local defs = sDf(sl.color, SWORD_SCALE, CF((r and r.Position or V(0, 50, 0)) + V(0, HEIGHT, 0)))
+local sw = tSw(build(defs, false, true), defs)
+sl.busy = false
+if sl.state ~= "converting" then
 if sw then call("Remove", sw.parts) end
 return
 end
 if sw then
-slot.sword = sw
-slot.block = nil
-loadCounter = loadCounter + 1
-slot.loadedAt = loadCounter
-slot.state = "loaded"
+sl.sw = sw
+sl.block = nil
+lc = lc + 1
+sl.lAt = lc
+sl.state = "loaded"
 if block then task.spawn(call, "Remove", { block }) end
-if loadedCount() == COUNT then
-combineBtn.Visible = true
+if lCt() == COUNT then
+cBtn.Visible = true
 report("All 7 loaded! Combine!")
 end
 else
-slot.state = "block"
+sl.state = "block"
 end
 end
-local function endSet()
-active, free, inflight = false, false, 0
+local function enS()
+active, free, inf = false, false, 0
 if conn then
 conn:Disconnect()
 conn = nil
 end
-slots = {}
-loadBtn.Visible, fireBtn.Visible, combineBtn.Visible = false, false, false
-showDel(false)
-buildBtn.Text = "Build Rainbow"
+SL = {}
+lBtn.Visible, fBtn.Visible, cBtn.Visible = false, false, false
+col2.Visible = false
+bBtn.Text = "Build Rainbow"
 end
-local function stopSet()
+local function stp()
 local rm = {}
-for _, s in ipairs(slots) do
+for _, s in ipairs(SL) do
 if s.block then ins(rm, s.block) end
-if s.sword then
-for _, p in ipairs(s.sword.parts) do ins(rm, p) end
+if s.sw then
+for _, p in ipairs(s.sw.parts) do ins(rm, p) end
 end
-s.block, s.sword, s.state = nil, nil, "done"
+s.block, s.sw, s.state = nil, nil, "done"
 end
 for _, sw in ipairs(stuck) do
 for _, p in ipairs(sw.parts) do ins(rm, p) end
 end
 stuck = {}
 if #rm > 0 then task.spawn(call, "Remove", rm) end
-endSet()
+enS()
 end
-local function frameUpdate(dt)
+local function fu(dt)
 local r = getRoot()
 if not r then return end
 angle = angle + dt * ORBIT_SPEED
 local head = r.Position + V(0, HEIGHT, 0)
-local mine = allParts()
+local mine = aP()
 local near, lim = false, free and PIN_DIST or UNPIN_DIST
 for _, pl in ipairs(Players:GetPlayers()) do
 local h = pl ~= player and pl.Character and pl.Character:FindFirstChild("HumanoidRootPart")
 if h then
-if (h.Position - r.Position).Magnitude < lim then near = true end
 for _, p in ipairs(mine) do
 if (h.Position - p.Position).Magnitude < lim then near = true end
 end
 end
 end
-if free == near then setFree(not near) end
+if free == near then sFr(not near) end
 local loaded, huge = {}, nil
-for _, s in ipairs(slots) do
+for _, s in ipairs(SL) do
 if s.state == "loaded" then
-if s.sword and s.sword.main.Parent then
+if s.sw and s.sw.main.Parent then
 if s.huge then huge = s else ins(loaded, s) end
 else
 s.state = "done"
 end
 end
 end
-table.sort(loaded, function(a, b) return a.loadedAt < b.loadedAt end)
-for _, slot in ipairs(slots) do
-local st = slot.state
+table.sort(loaded, function(a, b) return a.lAt < b.lAt end)
+for _, sl in ipairs(SL) do
+local st = sl.state
 if st == "block" or st == "rising" or st == "converting" then
-local b = slot.block
+local b = sl.block
 if b and b.Parent then
-local a = angle + (slot.index / COUNT) * math.pi * 2
+local a = angle + (sl.index / COUNT) * math.pi * 2
 local pos
 if st == "block" then
 pos = r.Position + V(math.cos(a) * ORBIT_RADIUS, 0.5, math.sin(a) * ORBIT_RADIUS)
 else
-slot.riseT = math.min(slot.riseT + dt / RISE_TIME, 1)
-local t = slot.riseT
-pos = slot.riseFrom:Lerp(head, t * t * (3 - 2 * t))
-if slot.riseT >= 1 and st == "rising" then
-slot.state = "converting"
-task.spawn(safe("Convert", convert), slot)
+sl.rT = math.min(sl.rT + dt / RISE_TIME, 1)
+local t = sl.rT
+pos = sl.rF:Lerp(head, t * t * (3 - 2 * t))
+if sl.rT >= 1 and st == "rising" then
+sl.state = "converting"
+task.spawn(safe("Convert", convert), sl)
 end
 end
 place(b, CF(pos) * CFrame.Angles(0, angle * SELF_SPIN, 0))
 elseif st == "block" then
-slot.state = "done"
+sl.state = "done"
 end
 end
 end
-for k, slot in ipairs(loaded) do
+for k, sl in ipairs(loaded) do
 local pos = head
 if #loaded > 1 then
 local a = angle * 1.2 + (k / #loaded) * math.pi * 2
 pos = head + V(math.cos(a) * LOADED_RADIUS, 0, math.sin(a) * LOADED_RADIUS)
 end
-placeSword(slot.sword, CF(pos) * CFrame.Angles(0, angle * SELF_SPIN, 0))
+pSw(sl.sw, CF(pos) * CFrame.Angles(0, angle * SELF_SPIN, 0))
 end
 if huge then
-placeSword(huge.sword, CF(r.Position + V(0, HUGE_HEIGHT, 0)) * CFrame.Angles(0, angle * 1.5, 0))
+pSw(huge.sw, CF(r.Position + V(0, HUGE_HEIGHT, 0)) * CFrame.Angles(0, angle * 1.5, 0))
 end
-syncT = syncT + dt
-if not free and syncT > SYNC_EVERY and inflight < MAX_INFLIGHT and #mine > 0 then
-syncT = 0
-inflight = inflight + 1
+sT = sT + dt
+if not free and sT > SYNC_EVERY and inf < MAX_INFLIGHT and #mine > 0 then
+sT = 0
+inf = inf + 1
 local list = {}
 for _, p in ipairs(mine) do ins(list, { Part = p, CFrame = p.CFrame }) end
 task.spawn(function()
 call("SyncMove", list)
-inflight = math.max(inflight - 1, 0)
+inf = math.max(inf - 1, 0)
 end)
 end
 end
 local function combine()
-if combining or not active or loadedCount() < COUNT then return end
+if cmb or not active or lCt() < COUNT then return end
 local r = getRoot()
 if not r then return end
-combining = true
-combineBtn.Visible = false
-report("Combining...")
+cmb = true
+cBtn.Visible = false
 local c = r.Position + V(0, HUGE_HEIGHT, 0)
 local items = {}
-for _, s in ipairs(slots) do
+for _, s in ipairs(SL) do
 if s.state == "loaded" and not s.huge then
 s.state = "combining"
-local rel = s.sword.main.Position - c
+local rel = s.sw.main.Position - c
 ins(items, {
 s = s, a0 = math.atan2(rel.Z, rel.X),
 r0 = math.max(V(rel.X, 0, rel.Z).Magnitude, 4), y0 = rel.Y,
@@ -470,8 +488,8 @@ if rr then c = rr.Position + V(0, HUGE_HEIGHT, 0) end
 for _, it in ipairs(items) do
 local th = it.a0 + 8 * (u + 3 * u * u)
 local rad = it.r0 + (1 - it.r0) * u * u
-if it.s.sword then
-placeSword(it.s.sword, CF(c + V(math.cos(th) * rad, it.y0 * (1 - u), math.sin(th) * rad))
+if it.s.sw then
+pSw(it.s.sw, CF(c + V(math.cos(th) * rad, it.y0 * (1 - u), math.sin(th) * rad))
 * CFrame.Angles(0, th * 2, 0))
 end
 end
@@ -479,87 +497,84 @@ if u >= 1 then break end
 RunService.RenderStepped:Wait()
 end
 if not active then
-combining = false
+cmb = false
 return
 end
 local rm = {}
 for _, it in ipairs(items) do
-if it.s.sword then
-for _, p in ipairs(it.s.sword.parts) do ins(rm, p) end
+if it.s.sw then
+for _, p in ipairs(it.s.sw.parts) do ins(rm, p) end
 end
 end
-lightning(c, rm)
-for _, it in ipairs(items) do it.s.sword, it.s.state = nil, "done" end
+lit(c, rm)
+for _, it in ipairs(items) do it.s.sw, it.s.state = nil, "done" end
 if not active then
-combining = false
+cmb = false
 return
 end
-local defs = swordDefs(WHITE, HUGE_SCALE, CF(c))
-local sw = toSword(build(defs, false, true), defs)
+local defs = sDf(WHITE, HUGE_SCALE, CF(c))
+local sw = tSw(build(defs, false, true), defs)
 if sw then
-ins(slots, { index = COUNT + 1, color = WHITE, state = "loaded", huge = true, loadedAt = -1, sword = sw })
-loadBtn.Visible = false
-showDel(true)
-report("Huge white sword! Pick what it deletes, then Fire.")
+ins(SL, { index = COUNT + 1, color = WHITE, state = "loaded", huge = true, lAt = -1, sw = sw })
+lBtn.Visible = false
+report("Huge sword ready! Fire!")
 else
 report("Combine failed")
 end
-combining = false
+cmb = false
 end
-buildBtn.MouseButton1Click:Connect(safe("Build", function()
-if building then return end
+bBtn.MouseButton1Click:Connect(safe("Build", function()
+if bld then return end
 if active then
-stopSet()
-report("Stopped and cleared")
+stp()
 return
 end
-if not refreshEndpoint() or not getRoot() then
+if not rE() or not getRoot() then
 report("No F3X tool found.")
 return
 end
-building = true
-buildBtn.Text = "Building..."
-slots = {}
+bld = true
+bBtn.Text = "Building..."
+SL = {}
 local defs = {}
 for i = 1, COUNT do
-slots[i] = { index = i, color = hue(i), state = "empty", riseT = 0 }
-defs[i] = { shape = "Ball", cf = getRoot().CFrame, size = BALL, color = hue(i) }
+SL[i] = { index = i, color = COLORS[i], state = "empty", rT = 0 }
+defs[i] = { shape = "Ball", cf = getRoot().CFrame, size = BALL, color = COLORS[i] }
 end
 local made = build(defs)
 if not made[1] then
-building = false
-buildBtn.Text = "Build Rainbow"
+bld = false
+bBtn.Text = "Build Rainbow"
 report("F3X did not respond. Hold the F3X tool.")
 return
 end
 for i = 1, COUNT do
-slots[i].block = made[i]
-slots[i].state = made[i] and "block" or "done"
+SL[i].block = made[i]
+SL[i].state = made[i] and "block" or "done"
 end
-building = false
+bld = false
 active = true
-buildBtn.Text = "Stop Rainbow"
-loadBtn.Visible, fireBtn.Visible = true, true
+bBtn.Text = "Stop Rainbow"
+lBtn.Visible, fBtn.Visible, col2.Visible = true, true, true
 report("Rainbow built")
-conn = RunService.RenderStepped:Connect(safe("Loop", frameUpdate))
+conn = RunService.RenderStepped:Connect(safe("Loop", fu))
 end))
-loadBtn.MouseButton1Click:Connect(safe("Load", function()
+lBtn.MouseButton1Click:Connect(safe("Load", function()
 if not active then return end
-for _, slot in ipairs(slots) do
-if slot.state == "block" and slot.block and slot.block.Parent and not slot.busy then
-slot.state = "rising"
-slot.riseT = 0
-slot.riseFrom = slot.block.Position
+for _, sl in ipairs(SL) do
+if sl.state == "block" and sl.block and sl.block.Parent and not sl.busy then
+sl.state = "rising"
+sl.rT = 0
+sl.rF = sl.block.Position
 return
 end
 end
 report("No balls left. Stop, then Build.")
 end))
-local function shoot(slot)
-slot.state = "flying"
-combineBtn.Visible = false
-if slot.huge then showDel(false) end
-local sw = slot.sword
+local function shoot(sl)
+sl.state = "flying"
+cBtn.Visible = false
+local sw = sl.sw
 local main = sw.main
 local params = RaycastParams.new()
 params.FilterType = Enum.RaycastFilterType.Exclude
@@ -571,19 +586,19 @@ local hit = workspace:Raycast(origin, look * MAX_RANGE, params)
 local target = hit and hit.Position or (origin + look * MAX_RANGE)
 local pos = main.Position
 local dir = (target - pos).Unit
-local total = math.max((target - pos).Magnitude - 5.3 * (slot.huge and HUGE_SCALE or SWORD_SCALE), 0)
+local total = math.max((target - pos).Magnitude - 5.3 * (sl.huge and HUGE_SCALE or SWORD_SCALE), 0)
 local travelled = 0
 local tilt = CFrame.Angles(-math.pi / 2, 0, 0)
-if slot.huge then task.spawn(trail, pos, pos + dir * total, total / SHOOT_SPEED) end
+if sl.huge then task.spawn(trail, pos, pos + dir * total, total / SHOOT_SPEED) end
 while travelled < total and main.Parent do
 local dt = RunService.RenderStepped:Wait()
 local step = math.min(SHOOT_SPEED * dt, total - travelled)
 travelled = travelled + step
 pos = pos + dir * step
-placeSword(sw, CFrame.lookAt(pos, pos + dir) * tilt)
+pSw(sw, CFrame.lookAt(pos, pos + dir) * tilt)
 end
-slot.sword = nil
-slot.state = "done"
+sl.sw = nil
+sl.state = "done"
 if main.Parent then
 local mv, an = {}, {}
 for _, p in ipairs(sw.parts) do
@@ -593,15 +608,15 @@ end
 call("SyncMove", mv)
 call("SyncAnchor", an)
 ins(stuck, sw)
-if slot.huge and hit then task.spawn(safe("Impact", impact), hit) end
+if hit then task.spawn(safe("Hit", sl.huge and impact or sH), hit) end
 end
 end
-fireBtn.MouseButton1Click:Connect(safe("Fire", function()
+fBtn.MouseButton1Click:Connect(safe("Fire", function()
 if not active then return end
 local best = nil
-for _, slot in ipairs(slots) do
-if slot.state == "loaded" and slot.sword and slot.sword.main.Parent then
-if not best or slot.loadedAt < best.loadedAt then best = slot end
+for _, sl in ipairs(SL) do
+if sl.state == "loaded" and sl.sw and sl.sw.main.Parent then
+if not best or sl.lAt < best.lAt then best = sl end
 end
 end
 if best then
@@ -610,7 +625,7 @@ else
 report("Load a sword first")
 end
 end))
-combineBtn.MouseButton1Click:Connect(safe("Combine", combine))
+cBtn.MouseButton1Click:Connect(safe("Combine", combine))
 report("Ready")
 end
 local ok, err = xpcall(main, function(e)
